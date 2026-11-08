@@ -1,0 +1,32 @@
+[
+  {
+    "id": "1",
+    "title": "Machine Learning & AI",
+    "query": "cat:cs.LG OR cat:cs.AI",
+    "description": "General machine learning, deep learning architectures, and artificial intelligence"
+  },
+  {
+    "id": "2",
+    "title": "Computer Vision",
+    "query": "cat:cs.CV",
+    "description": "Image processing, object detection, and generative vision models"
+  },
+  {
+    "id": "3",
+    "title": "Distributed & Parallel Computing",
+    "query": "cat:cs.DC",
+    "description": "Cloud systems, cluster orchestration, and high-performance computing"
+  },
+  {
+    "id": "4",
+    "title": "Cryptography & Security",
+    "query": "cat:cs.CR",
+    "description": "Information security, cryptography, privacy, and system robustness"
+  },
+  {
+    "id": "5",
+    "title": "Software Engineering",
+    "query": "cat:cs.SE",
+    "description": "Software architecture, testing, refactoring, and developer tools"
+  }
+]
