@@ -54,20 +54,26 @@ python3 arxiv_miner.py
 ```
 
 #### 2. Fetch Recent Papers by Topic ID
-Fetch the 3 most recent papers for Topic `1` (*Machine Learning & AI*):
+Fetch the 2 most recent papers for Topic `3` (*Distributed & Parallel Computing*):
 ```bash
-python3 arxiv_miner.py --topic 1 --limit 3
+python3 arxiv_miner.py --topic 3 --limit 2
 ```
-**Output Example**:
+
+**Real Terminal Output Example**:
 ```text
-Fetching 3 papers for: Machine Learning & AI (cat:cs.LG OR cat:cs.AI)...
+Fetching 2 papers for: Distributed & Parallel Computing (cat:cs.DC)...
 
---- Results (3 papers) ---
+--- Results (2 papers) ---
 
-[1] SwarmEvolve: Latent Agent Swarms for Evolutionary Discovery
-    Date: 2026-11-05 | Authors: Qile Jiang, George Em Karniadakis
-    Link: http://arxiv.org/abs/2611.08483v1 | PDF: https://arxiv.org/pdf/2611.08483v1
-    Abstract: LLM-guided evolutionary search uses AI agents to improve programs for mathematical and computational problems...
+[1] StrataFlux: Memory-Hierarchy-Native Low-Bit LLM Inference
+    Date: 2026-11-05 | Authors: Jake Hyun, Ziyu Zhao, Jae-sun Seo et al.
+    Link: http://arxiv.org/abs/2611.08363v1 | PDF: https://arxiv.org/pdf/2611.08363v1
+    Abstract: Quantization reduces the memory and bandwidth demands of large language model (LLM) inference but can degrade accuracy; offloading higher-precision data can instead stall generation. We introduce Stra...
+
+[2] Measured Coupling for Parallel Decoding in Diffusion Language Models
+    Date: 2026-11-05 | Authors: Tal Oved, Lior Wolf
+    Link: http://arxiv.org/abs/2611.08307v1 | PDF: https://arxiv.org/pdf/2611.08307v1
+    Abstract: Diffusion language models can write many tokens per step, but must choose which tokens are safe to commit together. Mean-field decoding penalizes pairs of positions whose predictions look alike. We re...
 ```
 
 #### 3. Custom Query (Keyword + Category)
@@ -151,9 +157,26 @@ python3 arxiv_miner.py
 ```
 
 #### 2. Buscar Papers por ID de Tema
-Busca os 3 artigos mais recentes do Tema `3` (*Distributed & Parallel Computing*):
+Busca os 2 artigos mais recentes do Tema `3` (*Distributed & Parallel Computing*):
 ```bash
-python3 arxiv_miner.py --topic 3 --limit 3
+python3 arxiv_miner.py --topic 3 --limit 2
+```
+
+**Exemplo de Saída Real no Terminal**:
+```text
+Fetching 2 papers for: Distributed & Parallel Computing (cat:cs.DC)...
+
+--- Results (2 papers) ---
+
+[1] StrataFlux: Memory-Hierarchy-Native Low-Bit LLM Inference
+    Date: 2026-11-05 | Authors: Jake Hyun, Ziyu Zhao, Jae-sun Seo et al.
+    Link: http://arxiv.org/abs/2611.08363v1 | PDF: https://arxiv.org/pdf/2611.08363v1
+    Abstract: Quantization reduces the memory and bandwidth demands of large language model (LLM) inference but can degrade accuracy; offloading higher-precision data can instead stall generation. We introduce Stra...
+
+[2] Measured Coupling for Parallel Decoding in Diffusion Language Models
+    Date: 2026-11-05 | Authors: Tal Oved, Lior Wolf
+    Link: http://arxiv.org/abs/2611.08307v1 | PDF: https://arxiv.org/pdf/2611.08307v1
+    Abstract: Diffusion language models can write many tokens per step, but must choose which tokens are safe to commit together. Mean-field decoding penalizes pairs of positions whose predictions look alike. We re...
 ```
 
 #### 3. Realizar Busca Personalizada via Linha de Comando
