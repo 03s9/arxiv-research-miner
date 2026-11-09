@@ -126,8 +126,10 @@ Edit `topics.json` to define your own categories and search queries:
 
 Run the test suite using standard `unittest`:
 ```bash
-PYTHONPATH=. python3 -m unittest discover -s tests
+MULTISOURCE_OFFLINE=1 PYTHONPATH=. python3 -m unittest discover -s tests
 ```
+
+Multisource collection is documented in [`docs/pesquisa-multifonte.md`](docs/pesquisa-multifonte.md). `arxiv_miner.py` stays the compatible arXiv client. A local test pass is not a GitHub Actions result.
 
 ---
 ---
@@ -219,8 +221,10 @@ Basta abrir o arquivo `topics.json` e adicionar ou alterar os blocos de configur
 
 Valide o parser XML e a leitura de configurações:
 ```bash
-PYTHONPATH=. python3 -m unittest discover -s tests
+MULTISOURCE_OFFLINE=1 PYTHONPATH=. python3 -m unittest discover -s tests
 ```
+
+A coleta multifonte está em [`docs/pesquisa-multifonte.md`](docs/pesquisa-multifonte.md). O `arxiv_miner.py` continua sendo o cliente compatível do arXiv. Teste local verde não é o resultado do GitHub Actions.
 
 ---
 

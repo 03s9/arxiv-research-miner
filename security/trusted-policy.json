@@ -1,0 +1,19 @@
+{
+  "schema": "trusted-execution-policy/v1",
+  "self_blessing": false,
+  "approval": {
+    "method": "separately_reviewed",
+    "approved_head": null
+  },
+  "scan_paths": ["multisource", "arxiv_miner.py"],
+  "reviewed_network_modules": [
+    "multisource/http_client.py",
+    "arxiv_miner.py"
+  ],
+  "reviewed_exceptions": [
+    {"path": "multisource/guardian.py", "rule": "subprocess_import"},
+    {"path": "multisource/guardian.py", "rule": "subprocess_call"}
+  ],
+  "allowed_third_party_dependencies": [],
+  "execution_note": "approved_head null does not approve the current git HEAD. This file is a static rule list, not a launch authorization."
+}
