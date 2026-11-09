@@ -149,15 +149,25 @@ def dedup_articles(
             index = parent[index]
         return index
 
-    def union(left: int, right: int) -> None:
+    def members(root: int) -> list[int]:
+        return [index for index in range(len(articles)) if find(index) == root]
+
+    def union_if_safe(left: int, right: int) -> None:
+        if not _can_alias(articles[left], articles[right]):
+            return
         root_left, root_right = find(left), find(right)
-        if root_left != root_right:
-            parent[root_right] = root_left
+        if root_left == root_right:
+            return
+        combined = members(root_left) + members(root_right)
+        versions = {articles[index].arxiv_version for index in combined if articles[index].arxiv_version}
+        identifiers = {articles[index].arxiv_id for index in combined if articles[index].arxiv_id}
+        if len(versions) > 1 or len(identifiers) > 1:
+            return
+        parent[root_right] = root_left
 
     for left in range(len(articles)):
         for right in range(left):
-            if _can_alias(articles[left], articles[right]):
-                union(left, right)
+            union_if_safe(left, right)
     buckets: dict[int, list[int]] = {}
     for index in range(len(articles)):
         buckets.setdefault(find(index), []).append(index)
