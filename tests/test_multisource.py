@@ -651,6 +651,24 @@ class ReviewRegressionTests(unittest.TestCase):
             pdf_url="",
         )
         self.assertEqual(len(dedup_articles([arxiv, unspecified], "2026-01-01T00:00:00Z")), 1)
+        bridge = _article(
+            provider="semantic_scholar",
+            doi="10.48550/arxiv.2101.00001",
+            arxiv_id="2101.00001",
+            arxiv_version=None,
+            link="https://www.semanticscholar.org/paper/abc123",
+            pdf_url="",
+        )
+        version_two = _article(
+            doi="10.48550/arxiv.2101.00001",
+            arxiv_version="v2",
+            link="https://arxiv.org/abs/2101.00001v2",
+        )
+        split = dedup_articles([arxiv, bridge, version_two], "2026-01-01T00:00:00Z")
+        self.assertEqual(len(split), 2)
+        self.assertEqual(sorted(item.arxiv_version for item, _prov in split), ["v1", "v2"])
+        self.assertEqual(sum(len(prov) for _item, prov in split), 3)
+        self.assertTrue(all(len(prov) <= 2 for _item, prov in split))
         later = _article(
             doi="10.48550/arxiv.2101.00001",
             arxiv_version="v2",

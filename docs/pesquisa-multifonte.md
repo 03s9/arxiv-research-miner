@@ -1,6 +1,17 @@
 # Pesquisa multifonte
 
-Coleta explícita além do `arxiv_miner.py`, que permanece compatível. O JSON de papers continua com `title`, `published`, `updated`, `authors`, `link`, `pdf_url` e `summary`. Proveniência, código e evidência ficam no manifesto.
+Coleta explícita além do `arxiv_miner.py`, que permanece compatível. O comando do coletor é `python3 -m multisource`. Ele não depende do guardião. O JSON de papers continua com `title`, `published`, `updated`, `authors`, `link`, `pdf_url` e `summary`. Proveniência fica no manifesto, em outro arquivo.
+
+```bash
+python3 -m multisource \
+  --topic 1 \
+  --limit 1 \
+  --sources arxiv,semantic_scholar,google_scholar,papers_with_code \
+  --export-json results/topic1-papers.json \
+  --export-manifest results/topic1-manifest.json
+```
+
+O tema `1` é o boilerplate `cat:cs.LG OR cat:cs.AI`. Não é um tema de TCC validado. Google Scholar e Papers with Code respondem `unsupported` e não são substituídos por Hugging Face. GitHub e documentos oficiais exigem um id arXiv/DOI, um `--github-repo`, ou um `--docs-url`. Um registro sem versão não une `v1` com `v2`.
 
 ## Fontes
 
