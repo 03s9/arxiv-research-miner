@@ -18,11 +18,13 @@ from multisource.http_client import (
     assert_provider_url,
     assert_public_https,
 )
-from multisource.identity import match_repo_to_article, repo_identity
-from multisource.models import Article, Evidence, ReleaseNote, RepoSnapshot
+from multisource.identity import match_repo_to_article, pdf_metadata_matches, repo_identity
+from multisource.models import Article, Evidence, ReleaseNote, RepoSnapshot, SourceOutcome
 from multisource.pipeline import RunConfig, dedup_articles, run_collection
 from multisource.practical import classify
+from multisource.sources.arxiv_source import ArxivSource
 from multisource.sources.github_source import GitHubSource
+from multisource.sources.semantic_scholar import SemanticScholarSource
 from multisource.sources.unsupported import GoogleScholarSource, PapersWithCodeSource
 
 SENTINEL = "SENTINEL_ABSTRACT_SHOULD_NOT_ENTER_BRIEFING"
@@ -562,6 +564,194 @@ class CliTests(unittest.TestCase):
         self.assertIn("topic_not_found", err)
 
 
+class ReviewRegressionTests(unittest.TestCase):
+    def test_nat64_and_compatible_literals_do_not_touch_the_network(self):
+        def explode(*_args, **_kwargs):
+            raise AssertionError("network used")
+
+        urls = [
+            "https://[64:ff9b::169.254.169.254]/latest/meta-data",
+            "https://[64:ff9b::7f00:1]/",
+            "https://[::169.254.169.254]/",
+        ]
+        with mock.patch("socket.getaddrinfo", explode), mock.patch("socket.create_connection", explode):
+            for url in urls:
+                with self.assertRaises(BlockedUrl):
+                    assert_public_https(url, explode)
+
+    def test_rebinding_does_not_connect_when_any_address_is_unsafe(self):
+        def connector(ip, host, request):
+            raise AssertionError(f"connected {ip}")
+
+        transport = UrllibTransport(resolver=lambda _host: ["8.8.8.8", "10.1.2.3"], connector=connector)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MULTISOURCE_OFFLINE", None)
+            with self.assertRaises(BlockedUrl):
+                transport.send(HttpRequest("GET", "https://export.arxiv.org/api/query?q=1", {}, 1))
+
+    def test_pinned_connect_uses_the_resolved_ip(self):
+        seen = {}
+
+        def connector(ip, host, request):
+            seen["ip"] = ip
+            seen["host"] = host
+            return HttpResponse(200, request.url, {}, b"ok")
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MULTISOURCE_OFFLINE", None)
+            UrllibTransport(resolver=lambda _host: ["8.8.8.8"], connector=connector).send(
+                HttpRequest("GET", "https://export.arxiv.org/api/query?q=1", {}, 1)
+            )
+        self.assertEqual(seen, {"ip": "8.8.8.8", "host": "export.arxiv.org"})
+
+    def test_redirect_hop_refuses_private_resolution_without_a_second_connect(self):
+        connects = []
+
+        def resolver(_host):
+            return ["8.8.8.8"] if not connects else ["fd00::1"]
+
+        def connector(ip, host, request):
+            connects.append(ip)
+            return HttpResponse(
+                302,
+                request.url,
+                {"location": "https://export.arxiv.org/api/query?q=2"},
+                b"",
+            )
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MULTISOURCE_OFFLINE", None)
+            client = HttpClient(UrllibTransport(resolver=resolver, connector=connector))
+            with self.assertRaises(BlockedUrl):
+                client.get_provider("arxiv", "https://export.arxiv.org/api/query?q=1", {}, 1)
+        self.assertEqual(connects, ["8.8.8.8"])
+
+    def test_cross_source_arxiv_id_merges_and_versions_do_not(self):
+        arxiv = _article(doi=None, provider="arxiv", arxiv_version="v1")
+        semantic = _article(
+            provider="semantic_scholar",
+            doi="10.48550/arXiv.2101.00001",
+            arxiv_id="2101.00001",
+            arxiv_version="v1",
+            link="https://www.semanticscholar.org/paper/abc123",
+            pdf_url="",
+            source_url="https://api.semanticscholar.org/graph/v1/paper/search",
+        )
+        merged = dedup_articles([arxiv, semantic], "2026-01-01T00:00:00Z")
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0][0].arxiv_id, "2101.00001")
+        self.assertEqual(merged[0][0].arxiv_version, "v1")
+        self.assertEqual(merged[0][0].doi, "10.48550/arxiv.2101.00001")
+        unspecified = _article(
+            provider="semantic_scholar",
+            doi=None,
+            arxiv_id="2101.00001",
+            arxiv_version=None,
+            link="https://www.semanticscholar.org/paper/abc123",
+            pdf_url="",
+        )
+        self.assertEqual(len(dedup_articles([arxiv, unspecified], "2026-01-01T00:00:00Z")), 1)
+        later = _article(
+            doi="10.48550/arxiv.2101.00001",
+            arxiv_version="v2",
+            link="https://arxiv.org/abs/2101.00001v2",
+        )
+        self.assertEqual(len(dedup_articles([arxiv, later], "2026-01-01T00:00:00Z")), 2)
+
+    def test_pdf_version_match_is_exact_and_synthesized_is_not_verified(self):
+        self.assertTrue(pdf_metadata_matches("2101.00001", "v1", "https://arxiv.org/pdf/2101.00001v1.pdf"))
+        self.assertFalse(pdf_metadata_matches("2101.00001", "v1", "https://arxiv.org/pdf/2101.00001v10.pdf"))
+        self.assertFalse(pdf_metadata_matches("2101.00001", "v1", "https://arxiv.org/pdf/2101.00002v1.pdf"))
+        self.assertFalse(pdf_metadata_matches("2101.00001", "v1", "https://arxiv.org/pdf/2101.00001.pdf"))
+        feed = b"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/2101.00001v1</id>
+    <published>2021-01-02T00:00:00Z</published>
+    <updated>2021-01-02T00:00:00Z</updated>
+    <title>Placeholder</title>
+    <summary>SENTINEL_ABSTRACT_SHOULD_NOT_ENTER_BRIEFING</summary>
+    <author><name>Ada Placeholder</name></author>
+  </entry>
+</feed>
+"""
+        bundle = run_collection(
+            RunConfig(query="id", sources=("arxiv",), limit=1, timeout=1),
+            HttpClient(FakeTransport(lambda request: _response(200, feed, request.url))),
+            _public_resolver,
+            lambda: "2026-01-01T00:00:00Z",
+        )
+        article = bundle.records[0].article
+        self.assertEqual(article.pdf_evidence, "inferred_url")
+        self.assertFalse(article.pdf_version_verified)
+        self.assertFalse(article.pdf_bytes_fetched)
+        payload = {
+            "total": 1,
+            "data": [
+                {
+                    "paperId": "abc123",
+                    "title": "Placeholder",
+                    "abstract": "x",
+                    "publicationDate": "2021-01-02",
+                    "authors": [{"name": "Ada Placeholder"}],
+                    "url": "https://www.semanticscholar.org/paper/abc123",
+                    "externalIds": {"ArXiv": "2101.00001v1", "DOI": "10.48550/arXiv.2101.00001"},
+                    "openAccessPdf": {"url": "https://arxiv.org/pdf/2101.00001v10.pdf"},
+                }
+            ],
+        }
+        semantic = SemanticScholarSource().collect(
+            "placeholder",
+            1,
+            None,
+            HttpClient(FakeTransport(lambda request: _response(200, json.dumps(payload), request.url))),
+            _public_resolver,
+            1,
+        )
+        self.assertFalse(semantic.articles[0].pdf_version_verified)
+        self.assertEqual(semantic.articles[0].pdf_evidence, "observed_metadata")
+        self.assertFalse(semantic.articles[0].pdf_bytes_fetched)
+
+    def test_equal_export_paths_are_rejected_before_write(self):
+        from tempfile import TemporaryDirectory
+
+        bundle = run_collection(
+            RunConfig(query="", sources=("google_scholar",), limit=1),
+            HttpClient(FakeTransport(lambda request: (_ for _ in ()).throw(AssertionError("network")))),
+            _public_resolver,
+            lambda: "2026-01-01T00:00:00Z",
+        )
+        from multisource.cli import emit
+        from multisource.models import UsageError
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            papers = root / "papers.json"
+            alias = root / "nested" / ".." / "papers.json"
+            with self.assertRaises(UsageError):
+                emit(bundle, papers, alias, None)
+            self.assertFalse(papers.exists())
+            link = root / "manifest.json"
+            link.symlink_to("papers.json")
+            with self.assertRaises(UsageError):
+                emit(bundle, papers, link, None)
+            self.assertFalse(papers.exists())
+
+    def test_homonym_rejection_is_in_the_public_manifest_view(self):
+        outcome = SourceOutcome(
+            "github",
+            "ok",
+            "",
+            200,
+            "not_provided",
+            rejected=[{"repo": "octo/demo", "reason": "homonym_or_missing_identifier", "readme": "secret-body"}],
+        )
+        public = outcome.public_dict()
+        self.assertEqual(public["rejected"], [{"repo": "octo/demo", "reason": "homonym_or_missing_identifier"}])
+        self.assertNotIn("secret-body", json.dumps(public))
+        self.assertNotIn("huggingface", json.dumps(public))
+
+
 class WorkflowTests(unittest.TestCase):
     def test_pull_request_workflow_is_offline_and_least_privilege(self):
         text = Path(".github/workflows/tests.yml").read_text(encoding="utf-8")
@@ -573,6 +763,12 @@ class WorkflowTests(unittest.TestCase):
             "MULTISOURCE_OFFLINE=1 PYTHONPATH=. python3 -m unittest discover -s tests",
             text,
         )
+        self.assertIn("multisource.guardian --check --policy security/trusted-policy.json --root .", text)
+        self.assertLess(
+            text.index("multisource.guardian --check"),
+            text.index("unittest discover"),
+        )
+        self.assertNotIn("guardian --run", text)
         self.assertIn("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", text)
         self.assertIn("actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0", text)
         self.assertNotIn("secrets.", text)

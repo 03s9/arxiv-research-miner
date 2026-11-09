@@ -10,9 +10,9 @@ SCHOLAR_REASON = (
 )
 PWC_REASON = (
     "unsupported: the official Papers with Code API at paperswithcode.com/api/v1 "
-    "was discontinued when the service was sunset in July 2025; "
-    "a direct request now redirects to https://huggingface.co/papers/trending. "
-    "No replacement is called."
+    "was discontinued when the service was sunset in July 2025. "
+    "A direct request can redirect to https://huggingface.co/papers/trending. "
+    "That historical redirect is not a Hugging Face collector; this tool does not call huggingface.co."
 )
 
 

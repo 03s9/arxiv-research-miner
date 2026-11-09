@@ -2,18 +2,34 @@
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from urllib.parse import urlencode
 
 from arxiv_miner import parse_arxiv_response
 from multisource.http_client import USER_AGENT, HttpClient
-from multisource.identity import parse_arxiv_from_url, valid_date
+from multisource.identity import parse_arxiv_from_url, pdf_metadata_matches, valid_date
 from multisource.models import SUMMARY_CAP, Article, SourceOutcome
 from multisource.sources.http_status import failure_status, http_failure
 
 _API = "https://export.arxiv.org/api/query"
 
 
-def _article_from_parsed(paper: object, source_url: str) -> Article:
+def observed_pdf_hrefs(xml_bytes: bytes) -> list[str | None]:
+    """PDF hrefs actually present in the feed. None means the legacy parser would synthesize one."""
+    root = ET.fromstring(xml_bytes)
+    namespace = {"atom": "http://www.w3.org/2005/Atom"}
+    observed: list[str | None] = []
+    for entry in root.findall("atom:entry", namespace):
+        href = None
+        for link_el in entry.findall("atom:link", namespace):
+            if link_el.attrib.get("title") == "pdf" and link_el.attrib.get("href"):
+                href = link_el.attrib.get("href")
+                break
+        observed.append(href)
+    return observed
+
+
+def _article_from_parsed(paper: object, source_url: str, observed_pdf: str | None) -> Article:
     link = str(getattr(paper, "link"))
     pdf_url = str(getattr(paper, "pdf_url") or "")
     arxiv_id, version = parse_arxiv_from_url(link)
@@ -38,8 +54,12 @@ def _article_from_parsed(paper: object, source_url: str) -> Article:
         doi=None,
         arxiv_id=arxiv_id,
         arxiv_version=version,
-        pdf_version_verified=bool(version and version in pdf_url),
+        pdf_version_verified=bool(
+            observed_pdf and pdf_metadata_matches(arxiv_id, version, observed_pdf)
+        ),
         summary_truncated=truncated,
+        pdf_evidence="observed_metadata" if observed_pdf else "inferred_url",
+        pdf_bytes_fetched=False,
     )
 
 
@@ -67,11 +87,16 @@ class ArxivSource:
             return SourceOutcome(self.provider, failed, failed, response.status, "not_used")
         try:
             papers = parse_arxiv_response(response.body)
+            observed = observed_pdf_hrefs(response.body)
         except Exception:
             return SourceOutcome(self.provider, "upstream_error", "invalid_feed", response.status, "not_used")
+        if len(observed) != len(papers):
+            return SourceOutcome(self.provider, "upstream_error", "pdf_evidence_mismatch", response.status, "not_used")
         articles = [
             item
-            for item in (_article_from_parsed(paper, url) for paper in papers)
+            for item in (
+                _article_from_parsed(paper, url, href) for paper, href in zip(papers, observed)
+            )
             if item.title
         ]
         status = "ok" if articles else "empty"

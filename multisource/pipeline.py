@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 
 from multisource.briefing import render_briefing
 from multisource.http_client import HttpClient, Resolver
-from multisource.identity import canonical_link, match_repo_to_article, repo_identity
+from multisource.identity import canonical_link, match_repo_to_article, normalize_doi, repo_identity
 from multisource.models import (
     SUCCESS_STATUSES,
     Article,
@@ -83,13 +83,21 @@ def _provenance(article: Article, retrieved_at: str) -> dict[str, object]:
 
 def _prefer(left: Article, right: Article) -> Article:
     primary, secondary = (left, right) if _RANK.get(left.provider, 9) <= _RANK.get(right.provider, 9) else (right, left)
-    pdf_url = primary.pdf_url or secondary.pdf_url
-    verified = primary.pdf_version_verified if primary.pdf_url else secondary.pdf_version_verified
+    if primary.pdf_url:
+        pdf_url = primary.pdf_url
+        verified = primary.pdf_version_verified
+        pdf_evidence = primary.pdf_evidence
+    else:
+        pdf_url = secondary.pdf_url
+        verified = secondary.pdf_version_verified
+        pdf_evidence = secondary.pdf_evidence
     return replace(
         primary,
         pdf_url=pdf_url,
         pdf_version_verified=verified,
-        doi=primary.doi or secondary.doi,
+        pdf_evidence=pdf_evidence,
+        pdf_bytes_fetched=False,
+        doi=normalize_doi(primary.doi) or normalize_doi(secondary.doi),
         arxiv_id=primary.arxiv_id or secondary.arxiv_id,
         arxiv_version=primary.arxiv_version or secondary.arxiv_version,
         summary=primary.summary or secondary.summary,
@@ -98,28 +106,74 @@ def _prefer(left: Article, right: Article) -> Article:
     )
 
 
-def _dedup_key(article: Article) -> tuple:
-    if article.doi:
-        return ("doi", article.doi)
-    if article.arxiv_id:
-        return ("arxiv", article.arxiv_id, article.arxiv_version or "")
-    return ("link", canonical_link(article.link))
+def _versions_conflict(left: Article, right: Article) -> bool:
+    if left.arxiv_id and right.arxiv_id and left.arxiv_id != right.arxiv_id:
+        return True
+    if left.arxiv_version and right.arxiv_version and left.arxiv_version != right.arxiv_version:
+        return True
+    return False
+
+
+def _can_alias(left: Article, right: Article) -> bool:
+    """Merge stable aliases. Conflicting arXiv ids or versions stay separate."""
+    if _versions_conflict(left, right):
+        return False
+    if left.arxiv_id and right.arxiv_id and left.arxiv_id == right.arxiv_id:
+        return True
+    left_doi = normalize_doi(left.doi)
+    right_doi = normalize_doi(right.doi)
+    if left_doi and right_doi and left_doi == right_doi:
+        return True
+    if not left.arxiv_id and not right.arxiv_id and not left.doi and not right.doi:
+        return bool(left.link) and canonical_link(left.link) == canonical_link(right.link)
+    return False
+
+
+def _version_relation(group: list[Article]) -> str:
+    present = {item.arxiv_version for item in group if item.arxiv_version}
+    if not present:
+        return "unspecified"
+    if any(not item.arxiv_version for item in group):
+        return "compatible_unspecified"
+    return "exact"
 
 
 def dedup_articles(
     articles: list[Article], retrieved_at: str
 ) -> list[tuple[Article, list[dict[str, object]]]]:
+    parent = list(range(len(articles)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        root_left, root_right = find(left), find(right)
+        if root_left != root_right:
+            parent[root_right] = root_left
+
+    for left in range(len(articles)):
+        for right in range(left):
+            if _can_alias(articles[left], articles[right]):
+                union(left, right)
+    buckets: dict[int, list[int]] = {}
+    for index in range(len(articles)):
+        buckets.setdefault(find(index), []).append(index)
     grouped: list[tuple[Article, list[dict[str, object]]]] = []
-    index: dict[tuple, int] = {}
-    for article in articles:
-        key = _dedup_key(article)
-        provenance = _provenance(article, retrieved_at)
-        if key not in index:
-            index[key] = len(grouped)
-            grouped.append((article, [provenance]))
-            continue
-        current, provenances = grouped[index[key]]
-        grouped[index[key]] = (_prefer(current, article), provenances + [provenance])
+    for indexes in buckets.values():
+        merged = articles[indexes[0]]
+        provenance = [_provenance(articles[indexes[0]], retrieved_at)]
+        members = [articles[indexes[0]]]
+        for index in indexes[1:]:
+            merged = _prefer(merged, articles[index])
+            provenance.append(_provenance(articles[index], retrieved_at))
+            members.append(articles[index])
+        extra = dict(merged.extra_provenance)
+        extra["version_relation"] = _version_relation(members)
+        merged = replace(merged, extra_provenance=extra)
+        grouped.append((merged, provenance))
     return grouped
 
 
@@ -364,6 +418,10 @@ def manifest_dict(bundle: Bundle, papers_sha256: str | None) -> dict[str, object
                 "link": article.link,
                 "pdf_url": article.pdf_url,
                 "pdf_version_verified": article.pdf_version_verified,
+                "pdf_evidence": article.pdf_evidence,
+                "pdf_bytes_fetched": False,
+                "pdf_bytes_verified": False,
+                "version_relation": article.extra_provenance.get("version_relation", ""),
                 "summary_sha256": summary_sha256(article.summary),
                 "summary_chars": len(article.summary),
                 "summary_included": False,

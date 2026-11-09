@@ -22,5 +22,8 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Security preflight
+        run: PYTHONPATH=. python3 -m multisource.guardian --check --policy security/trusted-policy.json --root .
+
       - name: Run offline unit tests
         run: MULTISOURCE_OFFLINE=1 PYTHONPATH=. python3 -m unittest discover -s tests

@@ -5,7 +5,7 @@ from __future__ import annotations
 from urllib.parse import urlencode
 
 from multisource.http_client import USER_AGENT, BlockedUrl, HttpClient, Resolver, assert_public_https
-from multisource.identity import normalize_doi, parse_arxiv_from_url, valid_date
+from multisource.identity import normalize_doi, parse_arxiv_from_url, pdf_metadata_matches, valid_date
 from multisource.models import SUMMARY_CAP, Article, SourceOutcome
 from multisource.sources.http_status import failure_status, http_failure, json_payload
 
@@ -13,19 +13,18 @@ _FIELDS = "paperId,title,abstract,authors,url,year,publicationDate,externalIds,o
 _SEARCH = "https://api.semanticscholar.org/graph/v1/paper/search"
 
 
-def _pdf_url(raw: object, resolver: Resolver) -> tuple[str, bool]:
+def _pdf_url(raw: object, resolver: Resolver) -> str:
     if not isinstance(raw, dict):
-        return "", False
+        return ""
     url = raw.get("url")
     if not isinstance(url, str) or not url.strip():
-        return "", False
+        return ""
     url = url.strip()
     try:
         assert_public_https(url, resolver)
     except BlockedUrl:
-        return "", False
-    _arxiv_id, version = parse_arxiv_from_url(url)
-    return url, bool(version and version in url)
+        return ""
+    return url
 
 
 class SemanticScholarSource:
@@ -106,9 +105,8 @@ def _article(row: object, source_url: str, resolver: Resolver) -> Article | None
     if not valid_date(published):
         published = ""
     year = row.get("year") if isinstance(row.get("year"), int) else None
-    pdf_url, pdf_verified = _pdf_url(row.get("openAccessPdf"), resolver)
-    if pdf_verified and version and version not in pdf_url:
-        pdf_verified = False
+    pdf_url = _pdf_url(row.get("openAccessPdf"), resolver)
+    pdf_verified = bool(pdf_url) and pdf_metadata_matches(arxiv_id, version, pdf_url)
     link = ""
     raw_url = row.get("url")
     if isinstance(raw_url, str) and raw_url.startswith("https://www.semanticscholar.org/"):
@@ -134,7 +132,9 @@ def _article(row: object, source_url: str, resolver: Resolver) -> Article | None
         doi=doi,
         arxiv_id=arxiv_id,
         arxiv_version=version,
-        pdf_version_verified=pdf_verified and bool(version and version in pdf_url),
+        pdf_version_verified=pdf_verified,
         year=year,
         summary_truncated=truncated,
+        pdf_evidence="observed_metadata" if pdf_url else "absent",
+        pdf_bytes_fetched=False,
     )

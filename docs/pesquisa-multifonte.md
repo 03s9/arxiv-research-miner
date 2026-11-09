@@ -11,31 +11,51 @@ Coleta explícita além do `arxiv_miner.py`, que permanece compatível. O JSON d
 | github | funcional só com repositório explícito ou consulta que é um único id arXiv/DOI | opcional: `GITHUB_TOKEN` | testes com fixture; `live_verified=false` |
 | official_docs | funcional para URLs https explícitas e a homepage de um repositório já vinculado | nenhuma | testes com fixture; sem crawl |
 | google_scholar | unsupported, sem API oficial | nenhuma | nenhum request |
-| papers_with_code | unsupported; a API oficial em `paperswithcode.com/api/v1` foi descontinuada em julho de 2025 e um request direto responde 302 para `https://huggingface.co/papers/trending` | nenhuma | checagem limitada do host, sem coleta de papers |
+| papers_with_code | unsupported. A API oficial acabou em julho de 2025. Um request direto pode redirecionar para `https://huggingface.co/papers/trending`. Esse redirect histórico não é um coletor Hugging Face e este código não chama `huggingface.co`. | nenhuma | sem coleta |
 
-`429`, credencial ausente, credencial rejeitada, timeout e resultado vazio são estados diferentes. Link, heurística, texto de autor e reprodução independente não recebem `production_verified`. Este coletor não certifica execução (`certifies_running=false`) e não decide elegibilidade de TCC nem ativa produção.
+Não há verificação ao vivo nesta mudança (`live_verified=false`). Os testes são fixtures offline. Não houve smoke de provedor: o guardião não autoriza execução.
 
-## Comando único depois do merge
+Hugging Face fica fora deste PR, no branch `feat/huggingface-deferred`. Relatos de modelo (`trust_remote_code`, pickle) pertencem a esse escopo e não são evidência de que este coletor de metadados está comprometido.
 
-Não faz parte do CI. Quem executa é o Analyst, uma vez, no SHA mergeado, com os caminhos ainda ausentes:
+## Guardião e Reddit
+
+`python3 -m multisource.guardian --check` inspeciona a árvore local (AST, permissões, symlink, encoding) sem DNS. Só depois disso a etapa Reddit é consultada. Nesta versão ela lê notas locais, não fala com o Reddit, e não aceita essas notas como recibo de aprovação. `--run` não inicia o coletor.
+
+Notas em `security/reddit-notes-principal.json`: pesquisa somente leitura em 2026-11-08 22:08 America/Sao_Paulo, corpus incompleto, nenhum post revisado cita este projeto (isso não prova ausência). O post R5 sobre Actions de terceiros e tags mutáveis continua em aberto; os Actions deste repositório estão pinados por commit, e isso não é um atestado de segurança.
+
+O comando direto `python3 -m multisource` não passa pelo guardião. Isso não é controle do sistema operacional.
+
+Checagens de rede do cliente HTTP: literais IPv6 com NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`) e IPv4-compatible (`::/96`) são recusados sem socket. Cada conexão resolve uma vez e abre TCP no IP checado; não há segundo lookup pelo nome. Se qualquer endereço resolvido não for público, não conecta. Limites: um IP, sem tentar outro endereço, no máximo dois redirects, certificado verificado para o hostname. Isso não prova que o destino é benigno.
+
+Identidade: o mesmo arXiv id une registros quando a versão não conflita, inclusive se só um lado tem DOI. `v1` e `v2` não se unem, mesmo com o mesmo DOI. `pdf_version_verified` exige id e versão exatos no URL observado; URL sintetizado pelo parser legado não conta. Bytes de PDF não são baixados. Dois caminhos de saída equivalentes, inclusive symlink, são recusados antes de escrever. Rejeições de homônimo do GitHub entram no manifesto só com `repo` e `reason`.
+
+## Comando depois do merge
+
+Não executar como coleta enquanto `--run` retornar pendente. O caminho documentado, que hoje bloqueia, é:
 
 ```bash
-python3 -m multisource \
-  --topic 1 \
-  --limit 1 \
-  --sources arxiv,semantic_scholar \
-  --export-json results/topic1-limit1-papers.json \
-  --export-manifest results/topic1-limit1-manifest.json
+python3 -m multisource.guardian \
+  --run \
+  --root . \
+  --policy security/trusted-policy.json \
+  --expect-head <SHA_REVISADO> \
+  -- \
+  python3 -m multisource \
+    --topic 1 \
+    --limit 1 \
+    --sources arxiv,semantic_scholar \
+    --export-json results/topic1-limit1-papers.json \
+    --export-manifest results/topic1-limit1-manifest.json
 ```
 
-O assunto `1` usa a consulta já definida em `topics.json`: `cat:cs.LG OR cat:cs.AI`. Saída de sucesso: exit 0, os dois status em `ok` ou `empty`, arquivo de papers criado nessa execução e `papers_sha256` impresso e gravado no manifesto. Exit diferente de 0 não grava o JSON de papers. PDF não é baixado. O briefing, se pedido com `--export-briefing`, não contém o abstract.
+A política versionada traz `approved_head` nulo de propósito. Ela não se autoaprova com o HEAD atual.
 
 ## CI
 
-O workflow `.github/workflows/tests.yml` dispara em `pull_request` com `contents: read` e roda:
+`.github/workflows/tests.yml` usa `pull_request` e `contents: read`. O preflight `--check` roda antes de:
 
 ```bash
 MULTISOURCE_OFFLINE=1 PYTHONPATH=. python3 -m unittest discover -s tests
 ```
 
-Um teste local verde não é o resultado do GitHub Actions.
+O `--check` verde não autoriza execução nem substitui o resultado do Actions.

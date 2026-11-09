@@ -91,6 +91,8 @@ class Article:
     pdf_version_verified: bool
     year: int | None = None
     summary_truncated: bool = False
+    pdf_evidence: str = "absent"
+    pdf_bytes_fetched: bool = False
     extra_provenance: dict[str, Any] = field(default_factory=dict)
 
     def paper_dict(self) -> dict[str, Any]:
@@ -175,4 +177,19 @@ class SourceOutcome:
             "credentials": self.credentials,
             "item_count": len(self.articles) + len(self.repos) + len(self.documents),
             "live_verified": False,
+            "rejected": _public_rejections(self.rejected),
         }
+
+
+def _public_rejections(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    public: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        public.append(
+            {
+                "repo": str(item.get("repo") or "")[:200],
+                "reason": str(item.get("reason") or "")[:80],
+            }
+        )
+    return public

@@ -160,7 +160,21 @@ def _absent(path: Path | None) -> None:
         raise UsageError("output_exists")
 
 
+def assert_distinct_outputs(*paths: Path | None) -> None:
+    """Reject equal paths, including symlink and .. aliases, before any write."""
+    chosen = [path for path in paths if path is not None]
+    resolved: list[Path] = []
+    for path in chosen:
+        try:
+            resolved.append(path.resolve(strict=False))
+        except OSError as exc:
+            raise UsageError("output_path_unresolved") from exc
+    if len(set(resolved)) != len(resolved):
+        raise UsageError("output_paths_alias")
+
+
 def emit(bundle, papers_path: Path | None, manifest_path: Path | None, briefing_path: Path | None) -> str | None:
+    assert_distinct_outputs(papers_path, manifest_path, briefing_path)
     for path in (papers_path, manifest_path, briefing_path):
         _absent(path)
     digest = None
@@ -252,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
         for url in docs:
             assert_public_https(url, default_resolver)
         supplied = load_supplied(args.evidence_file) if args.evidence_file else ()
+        assert_distinct_outputs(args.export_json, args.export_manifest, args.export_briefing)
         for path in (args.export_json, args.export_manifest, args.export_briefing):
             _absent(path)
     except UsageError as exc:

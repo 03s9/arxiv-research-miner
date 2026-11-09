@@ -1,0 +1,27 @@
+{
+  "schema": "reddit-threat-notes/v1",
+  "pass_receipt": false,
+  "self_approval": false,
+  "search_status": "incomplete",
+  "reddit_api_contacted_by_this_tool": false,
+  "live_connector": false,
+  "exhaustive": false,
+  "no_hit_is_not_security": true,
+  "project_named_in_reviewed_posts": false,
+  "absence_is_not_proof": true,
+  "completed_at": "2026-11-08T22:08:00-03:00",
+  "inventory_note": "Notes from read-only research at 22:08 America/Sao_Paulo on 2026-11-08. They do not assess the git head that contains later guardian changes, and they are not a pass receipt.",
+  "relevant_unresolved": [
+    {
+      "id": "R5",
+      "url": "https://www.reddit.com/r/devops/comments/1bllpzh/are_public_github_action_directives_a_security/",
+      "relevance": "supply_chain_discussion",
+      "artifact_specific_to_this_repo": false,
+      "allegation": "alleged",
+      "malware_proof": false,
+      "unresolved": true,
+      "scope": "Discussion of third-party GitHub Actions and mutable tags. Not malware proof. This repository pins action commits. The discussion is not a clearance of those pins."
+    }
+  ],
+  "deferred_elsewhere": "Hugging Face model-class reports are not evidence that this metadata collector is compromised. They are recorded only on the deferred Hugging Face branch."
+}

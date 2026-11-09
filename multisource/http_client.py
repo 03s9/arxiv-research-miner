@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import os
 import socket
-import urllib.error
-import urllib.request
+import ssl
+import urllib.parse
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit
@@ -74,12 +75,58 @@ def _hostname_block_reason(host: str) -> str | None:
     return None
 
 
-def _non_public_ip(text: str) -> bool:
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+_NAT64_LOCAL = ipaddress.ip_network("64:ff9b:1::/48")
+_V4_COMPATIBLE = ipaddress.ip_network("::/96")
+_6TO4 = ipaddress.ip_network("2002::/16")
+
+
+def _ipv4_unsafe(address: ipaddress.IPv4Address) -> bool:
+    return bool(
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+        or not address.is_global
+    )
+
+
+def address_is_unsafe(text: str) -> bool:
+    """Reject private, metadata, NAT64, and deprecated IPv4-compatible literals.
+
+    ipaddress.is_global is not enough: 64:ff9b::/96 and ::/96 can embed those
+    targets and still report is_global True. This predicate does not open a socket.
+    """
     try:
         address = ipaddress.ip_address(text)
     except ValueError:
-        return False
-    return not address.is_global
+        return True
+    if isinstance(address, ipaddress.IPv4Address):
+        return _ipv4_unsafe(address)
+    if address in _NAT64 or address in _NAT64_LOCAL or address in _V4_COMPATIBLE:
+        return True
+    mapped = getattr(address, "ipv4_mapped", None)
+    if mapped is not None and _ipv4_unsafe(mapped):
+        return True
+    if address in _6TO4:
+        embedded = ipaddress.IPv4Address((int(address) >> 80) & 0xFFFFFFFF)
+        if _ipv4_unsafe(embedded):
+            return True
+    return bool(
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+        or not address.is_global
+    )
+
+
+def _non_public_ip(text: str) -> bool:
+    return address_is_unsafe(text)
 
 
 def _split_https(url: str):
@@ -156,51 +203,83 @@ def default_resolver(host: str) -> list[str]:
     return found
 
 
-def _lower_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
-    if not headers:
-        return {}
-    return {str(key).lower(): str(value) for key, value in headers.items()}
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """TLS to one already-checked IP. The TCP peer is never chosen by a second lookup."""
 
+    def __init__(self, host: str, ip: str, timeout: float, context: ssl.SSLContext) -> None:
+        super().__init__(host, port=443, timeout=timeout, context=context)
+        self._pinned_ip = ip
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ARG002
-        return None
+    def connect(self) -> None:
+        raw = socket.create_connection((self._pinned_ip, 443), self.timeout)
+        try:
+            self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
+        except Exception:
+            raw.close()
+            raise
 
 
 class UrllibTransport:
+    def __init__(
+        self,
+        resolver: Resolver | None = None,
+        connector: Callable[..., HttpResponse] | None = None,
+    ) -> None:
+        self.resolver = resolver or default_resolver
+        self.connector = connector
+
     def send(self, request: HttpRequest) -> HttpResponse:
         if os.environ.get("MULTISOURCE_OFFLINE") == "1":
             raise OfflineError("network disabled")
-        outgoing = urllib.request.Request(
-            request.url,
-            headers=dict(request.headers),
-            method=request.method,
-        )
-        opener = urllib.request.build_opener(_NoRedirect())
+        host, chosen = self._pin(request.url)
+        if self.connector is not None:
+            return self.connector(chosen, host, request)
+        return self._pinned_request(chosen, host, request)
+
+    def _pin(self, url: str) -> tuple[str, str]:
+        parts, host = _split_https(url)
+        del parts
         try:
-            with opener.open(outgoing, timeout=request.timeout) as response:
-                body = response.read(MAX_BYTES + 1)
-                return HttpResponse(
-                    status=int(getattr(response, "status", 200)),
-                    url=response.geturl(),
-                    headers=_lower_headers(response.headers),
-                    body=body,
-                )
-        except urllib.error.HTTPError as err:
-            raw = err.read(MAX_BYTES + 1) if err.fp is not None else b""
-            return HttpResponse(
-                status=int(err.code),
-                url=request.url,
-                headers=_lower_headers(err.headers),
-                body=raw,
-            )
-        except urllib.error.URLError as err:
-            reason = getattr(err, "reason", None)
-            if isinstance(reason, (TimeoutError, socket.timeout)):
-                raise TransportError("timeout", "timeout") from None
-            raise TransportError("network", "network") from None
+            ipaddress.ip_address(host)
+            literal = True
+        except ValueError:
+            literal = False
+        if literal:
+            if address_is_unsafe(host):
+                raise BlockedUrl("non_public_ip")
+            return host, host
+        addresses = self.resolver(host)
+        if not addresses:
+            raise BlockedUrl("dns_failed")
+        for item in addresses:
+            if address_is_unsafe(item):
+                raise BlockedUrl("non_public_ip")
+        # Any later name lookup is intentionally not used. Limits: one address,
+        # no alternate-address retry, certificate is checked for the hostname.
+        return host, addresses[0]
+
+    def _pinned_request(self, ip: str, host: str, request: HttpRequest) -> HttpResponse:
+        context = ssl.create_default_context()
+        connection = _PinnedHTTPSConnection(host, ip, request.timeout, context)
+        target = urllib.parse.urlsplit(request.url)
+        path = target.path or "/"
+        if target.query:
+            path = f"{path}?{target.query}"
+        headers = {key: value for key, value in request.headers.items() if key.lower() != "host"}
+        try:
+            connection.request(request.method, path, headers=headers)
+            response = connection.getresponse()
+            body = response.read(MAX_BYTES + 1)
+            header_map = {key.lower(): value for key, value in response.getheaders()}
+            return HttpResponse(int(response.status), request.url, header_map, body)
         except (TimeoutError, socket.timeout):
             raise TransportError("timeout", "timeout") from None
+        except ssl.SSLError:
+            raise TransportError("network", "tls") from None
+        except OSError:
+            raise TransportError("network", "network") from None
+        finally:
+            connection.close()
 
 
 def rate_limited(response: HttpResponse) -> bool:
@@ -282,7 +361,16 @@ class HttpClient:
             location = response.headers.get("location")
             if not location:
                 raise TransportError("upstream", "redirect_missing_location")
-            current = urljoin(current, location)
+            nxt = urljoin(current, location)
+            current_host = (urlsplit(current).hostname or "").lower()
+            next_host = (urlsplit(nxt).hostname or "").lower()
+            if next_host and next_host != current_host:
+                headers = {
+                    key: value
+                    for key, value in headers.items()
+                    if key.lower() not in {"authorization", "x-api-key"}
+                }
+            current = nxt
         raise TransportError("upstream", "too_many_redirects")
 
     def _exchange(

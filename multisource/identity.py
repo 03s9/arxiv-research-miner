@@ -16,6 +16,10 @@ ARXIV_LABEL_RE = re.compile(
     re.IGNORECASE,
 )
 ARXIV_BARE_RE = re.compile(r"^(\d{4}\.\d{4,5})(v\d+)?$")
+ARXIV_PDF_RE = re.compile(
+    r"^https?://(?:www\.|export\.)?arxiv\.org/pdf/(?P<id>\d{4}\.\d{4,5})(?P<ver>v\d+)?(?:\.pdf)?/?$",
+    re.IGNORECASE,
+)
 DOI_RE = re.compile(r"\b(10\.\d{4,9}/[A-Za-z0-9._;()/:+\-]+)", re.IGNORECASE)
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -41,6 +45,23 @@ def parse_arxiv_from_url(url: str) -> tuple[str | None, str | None]:
     if not match:
         return None, None
     return match.group(1), match.group(2)
+
+
+def canonical_pdf_identity(url: str) -> tuple[str | None, str | None]:
+    """Exact arXiv PDF id and version. v1 does not match v10."""
+    match = ARXIV_PDF_RE.match((url or "").strip())
+    if not match:
+        return None, None
+    return match.group("id"), match.group("ver")
+
+
+def pdf_metadata_matches(article_id: str | None, article_version: str | None, url: str) -> bool:
+    pdf_id, pdf_version = canonical_pdf_identity(url)
+    if not pdf_id or not article_id or pdf_id.lower() != article_id.lower():
+        return False
+    if not article_version or not pdf_version:
+        return False
+    return pdf_version.lower() == article_version.lower()
 
 
 def identifiers_in_text(text: str) -> set[tuple[str, str, str | None]]:
