@@ -20,6 +20,7 @@ FUNCTIONAL_SOURCES = (
     "semantic_scholar",
     "github",
     "official_docs",
+    "huggingface",
 )
 UNSUPPORTED_SOURCES = (
     "google_scholar",

@@ -38,6 +38,11 @@ _SOURCE_HELP = (
     ("semantic_scholar", "functional public paper search; optional SEMANTIC_SCHOLAR_API_KEY; live_verified=false"),
     ("github", "functional for an explicit repo or a single arXiv id/DOI; optional GITHUB_TOKEN; live_verified=false"),
     ("official_docs", "functional for explicit https URLs and one linked homepage; no crawl; live_verified=false"),
+    (
+        "huggingface",
+        "deferred metadata-only GET /api/papers/search or /api/papers/{id}; optional HF_TOKEN; "
+        "no model download; live_verified=false",
+    ),
     ("google_scholar", "unsupported; no official public API; no request"),
     ("papers_with_code", "unsupported; official API discontinued; no request"),
 )
@@ -255,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
             if parse_repo_spec(spec) is None:
                 raise UsageError("invalid_github_repo")
         query = ""
-        needs_query = any(name in {"arxiv", "semantic_scholar"} for name in sources) or (
+        needs_query = any(name in {"arxiv", "semantic_scholar", "huggingface"} for name in sources) or (
             "github" in sources and not args.github_repo
         )
         if needs_query or args.query or args.topic:
@@ -285,6 +290,7 @@ def main(argv: list[str] | None = None) -> int:
         timeout=args.timeout,
         github_token=os.environ.get("GITHUB_TOKEN") or None,
         semantic_scholar_token=os.environ.get("SEMANTIC_SCHOLAR_API_KEY") or None,
+        huggingface_token=os.environ.get("HF_TOKEN") or None,
     )
     bundle = run_collection(config, HttpClient(UrllibTransport()), default_resolver, _clock)
     digest = None

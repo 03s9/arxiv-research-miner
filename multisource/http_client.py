@@ -5,6 +5,7 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import os
+import re
 import socket
 import ssl
 import urllib.parse
@@ -22,12 +23,15 @@ PROVIDER_HOSTS = {
     "arxiv": frozenset({"export.arxiv.org"}),
     "semantic_scholar": frozenset({"api.semanticscholar.org"}),
     "github": frozenset({"api.github.com"}),
+    "huggingface": frozenset({"huggingface.co"}),
 }
 PROVIDER_PREFIXES = {
     "arxiv": ("/api/query",),
     "semantic_scholar": ("/graph/v1/paper/search",),
     "github": ("/search/repositories", "/repos/"),
+    "huggingface": ("/api/papers/",),
 }
+_HF_PAPER_ID = re.compile(r"^\d{4}\.\d{4,5}$")
 
 
 class BlockedUrl(Exception):
@@ -155,9 +159,21 @@ def assert_provider_url(provider: str, url: str) -> None:
     if host.lower() not in PROVIDER_HOSTS[provider]:
         raise BlockedUrl("host_not_allowlisted")
     path = parts.path or ""
+    if provider == "huggingface":
+        if not _huggingface_paper_path(path):
+            raise BlockedUrl("path_not_allowlisted")
+        return
     prefixes = PROVIDER_PREFIXES[provider]
     if not any(path.startswith(prefix) for prefix in prefixes):
         raise BlockedUrl("path_not_allowlisted")
+
+
+def _huggingface_paper_path(path: str) -> bool:
+    if path == "/api/papers/search":
+        return True
+    if not path.startswith("/api/papers/"):
+        return False
+    return bool(_HF_PAPER_ID.fullmatch(path[len("/api/papers/") :].strip("/")))
 
 
 def assert_evidence_url(url: str) -> None:

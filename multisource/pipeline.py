@@ -18,6 +18,7 @@ from multisource.models import (
 from multisource.practical import Decision, classify
 from multisource.sources.arxiv_source import ArxivSource
 from multisource.sources.github_source import GitHubSource
+from multisource.sources.huggingface import HuggingFaceSource
 from multisource.sources.official_docs import OfficialDocsSource
 from multisource.sources.semantic_scholar import SemanticScholarSource
 from multisource.sources.unsupported import GoogleScholarSource, PapersWithCodeSource
@@ -44,6 +45,7 @@ class RunConfig:
     timeout: float = 20
     github_token: str | None = None
     semantic_scholar_token: str | None = None
+    huggingface_token: str | None = None
 
 
 @dataclass
@@ -264,6 +266,7 @@ def run_collection(
         repos.extend(outcome.repos)
     grouped = dedup_articles(articles, retrieved_at)
     records = [Record(article=article, provenance=provenance) for article, provenance in grouped]
+    _attach_explicit_code(records)
     _link_related(records)
     unlinked: list[dict[str, str]] = []
     for repo in repos:
@@ -353,11 +356,40 @@ def _collect_source(name: str, config: RunConfig, client: HttpClient, resolver: 
             client,
             config.timeout,
         )
+    if name == "huggingface":
+        return HuggingFaceSource().collect(
+            config.query,
+            config.limit,
+            config.huggingface_token,
+            client,
+            config.timeout,
+        )
     if name == "google_scholar":
         return GoogleScholarSource().collect()
     if name == "papers_with_code":
         return PapersWithCodeSource().collect()
     return SourceOutcome(name, "upstream_error", "unknown_source", None, "not_used")
+
+
+def _attach_explicit_code(records: list[Record]) -> None:
+    """Link code only from a stable repo id plus revision. Metadata never authorizes execution."""
+    for record in records:
+        candidate = record.article.extra_provenance.get("code_candidate")
+        if not isinstance(candidate, dict):
+            continue
+        repo = candidate.get("repo")
+        revision = candidate.get("revision")
+        if not isinstance(repo, str) or not isinstance(revision, str) or not repo or not revision:
+            continue
+        record.code_links.append(
+            {
+                "repo": repo,
+                "html_url": candidate.get("url") or "",
+                "match": "stable_id_and_revision",
+                "revision": revision,
+                "authorizes_execution": False,
+            }
+        )
 
 
 def _link_related(records: list[Record]) -> None:
